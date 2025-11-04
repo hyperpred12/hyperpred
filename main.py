@@ -1,7 +1,3 @@
-# main.py
-# Streamlit hypertension / cardiovascular risk prediction
-# Classes: Low / Medium / High
-
 import streamlit as st
 import pandas as pd
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -19,7 +15,7 @@ st.set_page_config(page_title="Hypertension Prediction App", page_icon="🧠")
 def load_and_train_model(csv_path: str):
     df = pd.read_csv(csv_path)
 
-    # --- New holistic risk labeling ---
+    # risk labeling
     def categorize_risk(row):
         score = 0
         # Blood pressure
@@ -36,26 +32,26 @@ def load_and_train_model(csv_path: str):
         # Glucose
         if "Glucose" in row and row["Glucose"] >= 126:
             score += 1
-        # Lifestyle
+        # Smoking and Alcohol
         if "Smoking" in row and str(row["Smoking"]).lower() == "yes":
             score += 1
         if "Alcohol" in row and str(row["Alcohol"]).lower() == "yes":
             score += 1
 
         if score <= 1:
-            return 0  # Low
+            return 0 
         elif score <= 3:
-            return 1  # Medium
+            return 1 
         else:
-            return 2  # High
+            return 2 
 
     df["RiskLevel"] = df.apply(categorize_risk, axis=1)
 
-    # Feature engineering
+    
     df["PulsePressure"] = df["SystolicBP"] - df["DiastolicBP"]
     df["MAP"] = (2 * df["DiastolicBP"] + df["SystolicBP"]) / 3
 
-    # Drop ID and raw BP (to avoid trivial leakage)
+    # Drop ID and raw BP to avoid trivial leakage
     drop_cols = [c for c in ["ID", "Hypertension"] if c in df.columns]
     df = df.drop(columns=drop_cols)
 
@@ -107,7 +103,6 @@ def load_and_train_model(csv_path: str):
         if col in clf_report_df.columns:
             clf_report_df[col] = (clf_report_df[col] * 100).round(2)
 
-    # Permutation importance
     perm = permutation_importance(best_model, X_test, y_test,
                                   n_repeats=10, random_state=42, scoring="balanced_accuracy")
 
@@ -134,11 +129,7 @@ def load_and_train_model(csv_path: str):
     }
 
     return best_model, acc, clf_report_df, importance_df, schema
-
-
-# -----------------------------
-# App UI
-# -----------------------------
+# System UI Design
 st.title("🧠 Hypertension Prediction System")
 
 model, accuracy, classification_report_df, importance_df, schema = load_and_train_model("hyperpred.csv")
@@ -200,7 +191,7 @@ with st.form("patient_form", clear_on_submit=False):
             user_categorical[col] = st.text_input(col, "")
 
     submitted = st.form_submit_button("Predict Risk Level")
-    # end of form
+    # End of Data entry UI
 if submitted:
     input_row = {**user_numeric, **user_categorical}
     input_df = pd.DataFrame([input_row])
@@ -216,3 +207,4 @@ if submitted:
                 st.write(f"{mapping[cls]}: {p*100:.1f}%")
     except Exception as e:
         st.error(f"Prediction failed: {e}")
+
