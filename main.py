@@ -1,5 +1,6 @@
 # main.py
-# Streamlit hypertension prediction with 3 classes: Low / Medium / High
+# Streamlit hypertension / cardiovascular risk prediction
+# Classes: Low / Medium / High
 
 import streamlit as st
 import pandas as pd
@@ -18,25 +19,44 @@ st.set_page_config(page_title="Hypertension Prediction App", page_icon="🧠")
 def load_and_train_model(csv_path: str):
     df = pd.read_csv(csv_path)
 
-    # --- Relabel into 3 classes ---
-    if "SystolicBP" in df.columns and "DiastolicBP" in df.columns:
-        def categorize_bp(row):
-            if row["SystolicBP"] >= 140 or row["DiastolicBP"] >= 90:
-                return 2  # High
-            elif row["SystolicBP"] >= 120 or row["DiastolicBP"] >= 80:
-                return 1  # Medium
-            else:
-                return 0  # Low
-        df["RiskLevel"] = df.apply(categorize_bp, axis=1)
-    else:
-        raise ValueError("Dataset must contain SystolicBP and DiastolicBP")
+    # --- New holistic risk labeling ---
+    def categorize_risk(row):
+        score = 0
+        # Blood pressure
+        if row["SystolicBP"] >= 140 or row["DiastolicBP"] >= 90:
+            score += 2
+        elif row["SystolicBP"] >= 120 or row["DiastolicBP"] >= 80:
+            score += 1
+        # BMI
+        if "BMI" in row and row["BMI"] >= 30:
+            score += 1
+        # Cholesterol
+        if "Cholesterol" in row and row["Cholesterol"] >= 240:
+            score += 1
+        # Glucose
+        if "Glucose" in row and row["Glucose"] >= 126:
+            score += 1
+        # Lifestyle
+        if "Smoking" in row and str(row["Smoking"]).lower() == "yes":
+            score += 1
+        if "Alcohol" in row and str(row["Alcohol"]).lower() == "yes":
+            score += 1
+
+        if score <= 1:
+            return 0  # Low
+        elif score <= 3:
+            return 1  # Medium
+        else:
+            return 2  # High
+
+    df["RiskLevel"] = df.apply(categorize_risk, axis=1)
 
     # Feature engineering
     df["PulsePressure"] = df["SystolicBP"] - df["DiastolicBP"]
     df["MAP"] = (2 * df["DiastolicBP"] + df["SystolicBP"]) / 3
 
     # Drop ID and raw BP (to avoid trivial leakage)
-    drop_cols = [c for c in ["ID", "SystolicBP", "DiastolicBP", "Hypertension"] if c in df.columns]
+    drop_cols = [c for c in ["ID", "Hypertension"] if c in df.columns]
     df = df.drop(columns=drop_cols)
 
     y = df["RiskLevel"]
@@ -119,8 +139,7 @@ def load_and_train_model(csv_path: str):
 # -----------------------------
 # App UI
 # -----------------------------
-st.title("🧠 Hypertension Prediction App")
-st.caption("Now predicts 3 categories: Low / Medium / High risk.")
+st.title("🧠 Hypertension Prediction System")
 
 model, accuracy, classification_report_df, importance_df, schema = load_and_train_model("hyperpred.csv")
 
@@ -131,38 +150,29 @@ st.dataframe(classification_report_df)
 st.header("Top features driving predictions")
 st.dataframe(importance_df.head(10))
 
-if schema["dropped_cols"]:
-    st.info(f"Excluded raw columns to avoid leakage: {', '.join(schema['dropped_cols'])}")
-
 st.header("Enter patient data")
 
 with st.form("patient_form", clear_on_submit=False):
     user_numeric = {}
     user_categorical = {}
 
-    # --- 1. Sex (Gender) ---
     if "Gender" in schema["categorical_cols"]:
         user_categorical["Gender"] = st.selectbox("Sex", ["Female", "Male"])
 
-    # --- 2. Age ---
     if "Age" in schema["numeric_cols"]:
         user_numeric["Age"] = st.number_input("Age", min_value=0, max_value=120, value=40, step=1)
 
-    # --- 3. Smoking ---
     if "Smoking" in schema["categorical_cols"]:
         user_categorical["Smoking"] = st.selectbox("Smoking", ["No", "Yes"])
 
-    # --- 4. Alcohol ---
     if "Alcohol" in schema["categorical_cols"]:
         user_categorical["Alcohol"] = st.selectbox("Alcohol", ["No", "Yes"])
 
-    # --- 5. BMI ---
     if "BMI" in schema["numeric_cols"]:
         user_numeric["BMI"] = st.number_input("BMI", min_value=10.0, max_value=60.0, value=26.0, step=0.1)
 
-    # --- 6. Other numeric features ---
     for col in schema["numeric_cols"]:
-        if col in ["Age", "BMI", "PulsePressure", "MAP"]:
+        if col in ["Age", "BMI", "PulsePressure", "MAP", "SystolicBP", "DiastolicBP"]:
             continue
         if col.lower() == "cholesterol":
             user_numeric[col] = st.number_input(col, min_value=100.0, max_value=400.0, value=200.0, step=0.1)
@@ -171,13 +181,13 @@ with st.form("patient_form", clear_on_submit=False):
         else:
             user_numeric[col] = st.number_input(col, value=0.0)
 
-    # --- 7. Blood pressure inputs (to compute derived features) ---
     systolic = st.number_input("SystolicBP", min_value=80.0, max_value=250.0, value=120.0, step=0.5)
     diastolic = st.number_input("DiastolicBP", min_value=40.0, max_value=150.0, value=80.0, step=0.5)
     user_numeric["PulsePressure"] = systolic - diastolic
     user_numeric["MAP"] = (2 * diastolic + systolic) / 3
+    user_numeric["SystolicBP"] = systolic
+    user_numeric["DiastolicBP"] = diastolic
 
-    # --- 8. Remaining categorical features ---
     for col in schema["categorical_cols"]:
         lowcol = col.lower()
         if col in ["Gender", "Smoking", "Alcohol"]:
@@ -190,6 +200,7 @@ with st.form("patient_form", clear_on_submit=False):
             user_categorical[col] = st.text_input(col, "")
 
     submitted = st.form_submit_button("Predict Risk Level")
+    # end of form
 if submitted:
     input_row = {**user_numeric, **user_categorical}
     input_df = pd.DataFrame([input_row])
