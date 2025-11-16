@@ -1,3 +1,7 @@
+# main.py
+# Streamlit hypertension / cardiovascular risk prediction
+# Classes: Low / Medium / High
+
 import streamlit as st
 import pandas as pd
 from sklearn.model_selection import train_test_split, GridSearchCV
@@ -9,14 +13,25 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import accuracy_score, classification_report
 from sklearn.inspection import permutation_importance
 
+# -----------------------------
+# Streamlit page configuration
+# -----------------------------
 st.set_page_config(page_title="Hypertension Prediction App", page_icon="🧠")
 
 @st.cache_data(show_spinner=True)
 def load_and_train_model(csv_path: str):
+    """
+    Loads patient data, preprocesses it, trains a Random Forest model,
+    and returns the trained model along with evaluation metrics.
+    """
+
     df = pd.read_csv(csv_path)
 
-    # risk labeling
+    # --- Risk labeling function ---
     def categorize_risk(row):
+        """
+        Assigns a risk level (0=Low, 1=Medium, 2=High) based on clinical thresholds.
+        """
         score = 0
         # Blood pressure
         if row["SystolicBP"] >= 140 or row["DiastolicBP"] >= 90:
@@ -32,35 +47,37 @@ def load_and_train_model(csv_path: str):
         # Glucose
         if "Glucose" in row and row["Glucose"] >= 126:
             score += 1
-        # Smoking and Alcohol
+        # Lifestyle
         if "Smoking" in row and str(row["Smoking"]).lower() == "yes":
             score += 1
         if "Alcohol" in row and str(row["Alcohol"]).lower() == "yes":
             score += 1
 
         if score <= 1:
-            return 0 
+            return 0  # Low
         elif score <= 3:
-            return 1 
+            return 1  # Medium
         else:
-            return 2 
+            return 2  # High
 
     df["RiskLevel"] = df.apply(categorize_risk, axis=1)
 
-    
+    # Feature engineering
     df["PulsePressure"] = df["SystolicBP"] - df["DiastolicBP"]
     df["MAP"] = (2 * df["DiastolicBP"] + df["SystolicBP"]) / 3
 
-    # Drop ID and raw BP to avoid trivial leakage
+    # Drop ID and raw BP (to avoid trivial leakage)
     drop_cols = [c for c in ["ID", "Hypertension"] if c in df.columns]
     df = df.drop(columns=drop_cols)
 
     y = df["RiskLevel"]
     X = df.drop(columns=["RiskLevel"])
 
+    # Separate numeric and categorical features
     numeric_cols = X.select_dtypes(include=["int64", "float64"]).columns.tolist()
     categorical_cols = X.select_dtypes(include=["object", "category", "bool"]).columns.tolist()
 
+    # Preprocessing pipelines
     numeric_transformer = Pipeline(steps=[
         ("imputer", SimpleImputer(strategy="mean")),
         ("scaler", StandardScaler())
@@ -77,13 +94,16 @@ def load_and_train_model(csv_path: str):
         remainder="drop"
     )
 
+    # Random Forest Classifier
     rf = RandomForestClassifier(random_state=42, class_weight="balanced")
     pipe = Pipeline(steps=[("preprocessor", preprocessor), ("model", rf)])
 
+    # Train-test split
     X_train, X_test, y_train, y_test = train_test_split(
         X, y, test_size=0.2, random_state=42, stratify=y
     )
 
+    # Hyperparameter tuning
     param_grid = {
         "model__n_estimators": [200, 400],
         "model__max_depth": [None, 10, 15],
@@ -94,15 +114,18 @@ def load_and_train_model(csv_path: str):
     grid.fit(X_train, y_train)
     best_model = grid.best_estimator_
 
+    # Predictions
     y_pred = best_model.predict(X_test)
     acc = accuracy_score(y_test, y_pred)
 
+    # Classification report
     clf_report = classification_report(y_test, y_pred, output_dict=True, zero_division=0)
     clf_report_df = pd.DataFrame(clf_report).transpose()
     for col in ["precision", "recall", "f1-score"]:
         if col in clf_report_df.columns:
             clf_report_df[col] = (clf_report_df[col] * 100).round(2)
 
+    # Permutation importance
     perm = permutation_importance(best_model, X_test, y_test,
                                   n_repeats=10, random_state=42, scoring="balanced_accuracy")
 
@@ -129,7 +152,11 @@ def load_and_train_model(csv_path: str):
     }
 
     return best_model, acc, clf_report_df, importance_df, schema
-# System UI Design
+
+
+# -----------------------------
+# App UI
+# -----------------------------
 st.title("🧠 Hypertension Prediction System")
 
 model, accuracy, classification_report_df, importance_df, schema = load_and_train_model("hyperpred.csv")
@@ -138,9 +165,50 @@ st.markdown(f"**Model accuracy:** {accuracy * 100:.2f}%")
 st.header("Classification report (percent)")
 st.dataframe(classification_report_df)
 
+# Explanation of metrics
+st.markdown("""
+### 📊 Metrics Explained
+- **Precision**: Out of all patients predicted in a class, how many were correct?  
+- **Recall (Sensitivity)**: Out of all actual patients in a class, how many were correctly identified?  
+- **F1-score**: Balance between precision and recall (harmonic mean).  
+- **Support**: Number of actual samples for each class in the test set.  
+""")
+
 st.header("Top features driving predictions")
 st.dataframe(importance_df.head(10))
 
+# -----------------------------
+# Explanations Section
+# -----------------------------
+st.header("ℹ️ How the system works")
+
+with st.expander("🔍 Features used in prediction"):
+    st.markdown("""
+    The model relies on both **numeric** and **categorical** patient features.
+    - Numeric features include: Age, BMI, Cholesterol, Glucose, Blood Pressure (Systolic & Diastolic), Pulse Pressure, MAP, etc.
+    - Categorical features include: Gender, Smoking, Alcohol, Family History, Physical Activity, and others.
+    These features are preprocessed (scaled or one-hot encoded) before training.
+    """)
+
+with st.expander("📊 Risk level meaning (0 / 1 / 2)"):
+    st.markdown("""
+    The risk label is assigned based on a scoring system:
+    - **0 → Low risk** 🟩 : Very few or no risk factors.
+    - **1 → Medium risk** 🟨 : Moderate number of risk factors.
+    - **2 → High risk** 🟥 : Multiple strong risk factors (e.g., high blood pressure, high cholesterol, smoking).
+    """)
+
+with st.expander("⚙️ Algorithm used"):
+    st.markdown("""
+    The prediction engine is based on a **Random Forest Classifier**🌲.
+    - It is an ensemble learning method that builds many decision trees and combines their outputs.
+    - This approach improves accuracy and handles both numeric and categorical data well.
+    - The model was tuned using **GridSearchCV** to find the best hyperparameters.
+    """)
+
+# -----------------------------
+# Patient Input Form
+# -----------------------------
 st.header("Enter patient data")
 
 with st.form("patient_form", clear_on_submit=False):
@@ -162,6 +230,7 @@ with st.form("patient_form", clear_on_submit=False):
     if "BMI" in schema["numeric_cols"]:
         user_numeric["BMI"] = st.number_input("BMI", min_value=10.0, max_value=60.0, value=26.0, step=0.1)
 
+    # Other numeric inputs
     for col in schema["numeric_cols"]:
         if col in ["Age", "BMI", "PulsePressure", "MAP", "SystolicBP", "DiastolicBP"]:
             continue
@@ -172,6 +241,7 @@ with st.form("patient_form", clear_on_submit=False):
         else:
             user_numeric[col] = st.number_input(col, value=0.0)
 
+    # Blood pressure inputs
     systolic = st.number_input("SystolicBP", min_value=80.0, max_value=250.0, value=120.0, step=0.5)
     diastolic = st.number_input("DiastolicBP", min_value=40.0, max_value=150.0, value=80.0, step=0.5)
     user_numeric["PulsePressure"] = systolic - diastolic
@@ -179,6 +249,7 @@ with st.form("patient_form", clear_on_submit=False):
     user_numeric["SystolicBP"] = systolic
     user_numeric["DiastolicBP"] = diastolic
 
+    # Other categorical inputs
     for col in schema["categorical_cols"]:
         lowcol = col.lower()
         if col in ["Gender", "Smoking", "Alcohol"]:
@@ -191,20 +262,28 @@ with st.form("patient_form", clear_on_submit=False):
             user_categorical[col] = st.text_input(col, "")
 
     submitted = st.form_submit_button("Predict Risk Level")
-    # End of Data entry UI
+    # end of form
+
+# -----------------------------
+# Prediction output
+# -----------------------------
 if submitted:
     input_row = {**user_numeric, **user_categorical}
     input_df = pd.DataFrame([input_row])
+
     try:
         pred = int(model.predict(input_df)[0])
         proba = model.predict_proba(input_df)[0] if hasattr(model, "predict_proba") else None
+
         mapping = {0: "🟩 Low risk", 1: "🟨 Medium risk", 2: "🟥 High risk"}
         result = mapping.get(pred, "Unknown")
+
         st.subheader(f"Prediction: {result}")
+
         if proba is not None:
             st.write("Confidence by class:")
             for cls, p in enumerate(proba):
                 st.write(f"{mapping[cls]}: {p*100:.1f}%")
+
     except Exception as e:
         st.error(f"Prediction failed: {e}")
-
